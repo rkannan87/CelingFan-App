@@ -6,7 +6,7 @@ import com.medavie.bluecross.tech.enums.SpeedState;
 
 public class CeilingFan {
 	
-	private SpeedState level;
+    private SpeedState level;
     private DirectionState state;
     private boolean isPowerOn;
 
