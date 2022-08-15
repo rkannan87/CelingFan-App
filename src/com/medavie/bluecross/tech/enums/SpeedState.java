@@ -2,17 +2,10 @@ package com.medavie.bluecross.tech.enums;
 
 public enum SpeedState {
 	
-	OFF(0),  	// 0
-	LOW(1), 	// 1
-	MEDIUM(2), 	// 2
-	HIGH(3); 	// 3
-	
-	private final int level;
-	
-	SpeedState(int level) {
-		this.level = level;
-	}
-
+	OFF,  	// 0
+	LOW, 	// 1
+	MEDIUM, // 2
+	HIGH; 	// 3
 	
 	public SpeedState getNextMode() {
         return values()[(ordinal()+1) % values().length];
