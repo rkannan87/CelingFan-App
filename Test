@@ -1,585 +1,428 @@
+@startuml
 # Job Queue-Based Retry Handling - Sequence Diagrams
-
 ## Case 1: Successful API Call (Happy Path)
-
 ```mermaid
-sequenceDiagram
-    participant Client as Client Application
-    participant API as API Service
-    participant Logger as Logging Service
-    
-    Client->>API: Make API Call
-    activate API
-    API-->>Client: ✓ Success (200)
-    deactivate API
-    Client->>Logger: Log Success Metric
-    Note over Client,Logger: Request completed successfully
+participant "Client Application" as Client
+participant "API Service" as API
+participant "Logging Service" as Logger
+Client ->> API: Make API Call
+activate API
+API --> Client: ✓ Success (200)
+deactivate API
+Client ->> Logger: Log Success Metric
+Note over Client,Logger: Request completed successfully
 ```
-
 ---
-
 ## Case 2: Transient Failure → Retry → Success
-
 ```mermaid
-sequenceDiagram
-    participant Client as Client Application
-    participant RH as Retry Handler
-    participant API as API Service
-    participant NS as Notification Service
-    participant Logger as Logging Service
-    
-    Client->>RH: Make API Call (Attempt 1)
-    RH->>API: Call API
-    activate API
-    API-->>RH: ✗ Failure (503)
-    deactivate API
-    Note over RH: Exponential Backoff: 1s
-    
-    RH->>API: Retry Attempt 2
-    activate API
-    API-->>RH: ✗ Failure (502)
-    deactivate API
-    Note over RH: Exponential Backoff: 2s
-    
-    RH->>API: Retry Attempt 3
-    activate API
-    API-->>RH: ✓ Success (200)
-    deactivate API
-    
-    RH-->>Client: Return Success
-    RH->>Logger: Log: "Succeeded after 3 attempts"
-    RH->>NS: Send Recovery Alert
-    NS-->>RH: Alert Sent
-    Note over Client,Logger: Recovered from transient failure
+participant "Client Application" as Client
+participant "Retry Handler" as RH
+participant "API Service" as API
+participant "Notification Service" as NS
+participant "Logging Service" as Logger
+Client ->> RH: Make API Call (Attempt 1)
+RH ->> API: Call API
+activate API
+API --> RH: ✗ Failure (503)
+deactivate API
+Note over RH: Exponential Backoff: 1s
+RH ->> API: Retry Attempt 2
+activate API
+API --> RH: ✗ Failure (502)
+deactivate API
+Note over RH: Exponential Backoff: 2s
+RH ->> API: Retry Attempt 3
+activate API
+API --> RH: ✓ Success (200)
+deactivate API
+RH --> Client: Return Success
+RH ->> Logger: Log: "Succeeded after 3 attempts"
+RH ->> NS: Send Recovery Alert
+NS --> RH: Alert Sent
+Note over Client,Logger: Recovered from transient failure
 ```
-
 ---
-
 ## Case 3: Initial Retries Exhausted → Queue for Later
-
 ```mermaid
-sequenceDiagram
-    participant Client as Client Application
-    participant RH as Retry Handler
-    participant API as API Service
-    participant Queue as Job Queue
-    participant NS as Notification Service
-    participant Worker as Retry Worker
-    
-    Client->>RH: Make API Call (Attempt 1)
-    RH->>API: Call API
-    API-->>RH: ✗ Failure (503)
-    Note over RH: Exponential Backoff
-    
-    RH->>API: Attempt 2
-    API-->>RH: ✗ Failure (503)
-    Note over RH: Exponential Backoff
-    
-    RH->>API: Attempt 3
-    API-->>RH: ✗ Failure (503)
-    
-    Note over RH: Initial retries exhausted
-    RH->>Queue: Publish Message<br/>{requestId, payload,<br/>attempt: 3, delay: 3min}
-    RH->>NS: Email: "Initial retries failed.<br/>Scheduled for retry in 3 mins"
-    RH-->>Client: Return Queued Status
-    
-    Note over Queue: Wait 3 minutes<br/>(visibility timeout)
-    
-    Queue->>Worker: Deliver Message
-    Worker->>API: Attempt 4
-    API-->>Worker: ✗ Failure (504)
-    
-    Worker->>API: Attempt 5
-    API-->>Worker: ✗ Failure (504)
-    
-    Worker->>API: Attempt 6
-    API-->>Worker: ✗ Failure (504)
-    
-    Worker->>Queue: Republish with 2-hour delay<br/>{requestId, attempt: 6,<br/>nextRetry: +2hours}
-    Worker->>NS: Email: "Still failing.<br/>Next retry in 2 hours"
-    
-    Note over Queue,Worker: Continues with 2-hour intervals
+participant "Client Application" as Client
+participant "Retry Handler" as RH
+participant "API Service" as API
+participant "Job Queue" as Queue
+participant "Notification Service" as NS
+participant "Retry Worker" as Worker
+Client ->> RH: Make API Call (Attempt 1)
+RH ->> API: Call API
+API --> RH: ✗ Failure (503)
+Note over RH: Exponential Backoff
+RH ->> API: Attempt 2
+API --> RH: ✗ Failure (503)
+Note over RH: Exponential Backoff
+RH ->> API: Attempt 3
+API --> RH: ✗ Failure (503)
+Note over RH: Initial retries exhausted
+RH ->> Queue: Publish Message<br/>{requestId, payload,<br/>attempt: 3, delay: 3min}
+RH ->> NS: Email: "Initial retries failed.<br/>Scheduled for retry in 3 mins"
+RH --> Client: Return Queued Status
+Note over Queue: Wait 3 minutes<br/>(visibility timeout)
+Queue ->> Worker: Deliver Message
+Worker ->> API: Attempt 4
+API --> Worker: ✗ Failure (504)
+Worker ->> API: Attempt 5
+API --> Worker: ✗ Failure (504)
+Worker ->> API: Attempt 6
+API --> Worker: ✗ Failure (504)
+Worker ->> Queue: Republish with 2-hour delay<br/>{requestId, attempt: 6,<br/>nextRetry: +2hours}
+Worker ->> NS: Email: "Still failing.<br/>Next retry in 2 hours"
+Note over Queue,Worker: Continues with 2-hour intervals
 ```
-
 ---
-
 ## Case 4: Long-term Retry → Eventually Succeeds
-
 ```mermaid
-sequenceDiagram
-    participant Queue as Job Queue
-    participant Worker as Retry Worker
-    participant API as API Service
-    participant NS as Notification Service
-    participant Logger as Logging Service
-    
-    Note over Queue: 2-hour retry cycle begins
-    
-    Queue->>Worker: Deliver Message (after 2 hours)
-    Worker->>API: Attempt 7
-    API-->>Worker: ✗ Failure
-    
-    Worker->>API: Attempt 8
-    API-->>Worker: ✗ Failure
-    
-    Worker->>API: Attempt 9
-    API-->>Worker: ✗ Failure
-    
-    Worker->>Queue: Re-queue for another 2 hours
-    Note over Queue: Wait 2 hours
-    
-    Queue->>Worker: Deliver Message
-    Worker->>API: Attempt 10
-    API-->>Worker: ✗ Failure
-    
-    Worker->>API: Attempt 11
-    API-->>Worker: ✗ Failure
-    
-    Worker->>API: Attempt 12
-    activate API
-    API-->>Worker: ✓ Success (200)
-    deactivate API
-    
-    Worker->>Queue: Remove from Queue
-    Worker->>NS: Email: "API call succeeded<br/>after 12 attempts over 4+ hours"
-    Worker->>Logger: Log Recovery Metrics<br/>{totalAttempts: 12,<br/>duration: 4+ hours}
-    
-    Note over Worker,Logger: Successfully recovered<br/>after extended retry period
+participant "Job Queue" as Queue
+participant "Retry Worker" as Worker
+participant "API Service" as API
+participant "Notification Service" as NS
+participant "Logging Service" as Logger
+Note over Queue: 2-hour retry cycle begins
+Queue ->> Worker: Deliver Message (after 2 hours)
+Worker ->> API: Attempt 7
+API --> Worker: ✗ Failure
+Worker ->> API: Attempt 8
+API --> Worker: ✗ Failure
+Worker ->> API: Attempt 9
+API --> Worker: ✗ Failure
+Worker ->> Queue: Re-queue for another 2 hours
+Note over Queue: Wait 2 hours
+Queue ->> Worker: Deliver Message
+Worker ->> API: Attempt 10
+API --> Worker: ✗ Failure
+Worker ->> API: Attempt 11
+API --> Worker: ✗ Failure
+Worker ->> API: Attempt 12
+activate API
+API --> Worker: ✓ Success (200)
+deactivate API
+Worker ->> Queue: Remove from Queue
+Worker ->> NS: Email: "API call succeeded<br/>after 12 attempts over 4+ hours"
+Worker ->> Logger: Log Recovery Metrics<br/>{totalAttempts: 12,<br/>duration: 4+ hours}
+Note over Worker,Logger: Successfully recovered<br/>after extended retry period
 ```
-
 ---
-
 ## Case 5: Permanent Failure → Dead Letter Queue
-
 ```mermaid
-sequenceDiagram
-    participant Queue as Job Queue
-    participant Worker as Retry Worker
-    participant API as API Service
-    participant DLQ as Dead Letter Queue
-    participant NS as Notification Service
-    participant IMS as Incident Management
-    participant Eng as Engineering Team
-    
-    Note over Queue: 2-hour retry cycles continue
-    
-    loop Retry Attempts
-        Queue->>Worker: Deliver Message
-        Worker->>API: Retry Attempt
-        API-->>Worker: ✗ Failure
-        Worker->>Queue: Re-queue
-    end
-    
-    Worker->>Worker: Check: Total attempts > 20<br/>Duration > 24 hours
-    
-    Note over Worker: Max retries exceeded
-    
-    Worker->>DLQ: Move to DLQ<br/>{requestId, failureReason,<br/>totalAttempts: 20,<br/>firstFailure, lastFailure}
-    
-    DLQ->>NS: Send Critical Alert Email<br/>"API call permanently failed<br/>after 20 attempts"
-    
-    NS->>IMS: Trigger Incident<br/>(PagerDuty/Opsgenie)
-    
-    IMS->>Eng: Alert Engineering Team
-    
-    Note over Eng: Manual intervention required
-    
-    Eng->>DLQ: Investigate Failed Message
-    
-    alt Resolution Found
-        Eng->>DLQ: Reprocess Message
-        DLQ->>Queue: Re-queue with Fix
-    else Cannot Resolve
-        Eng->>DLQ: Mark as Handled
-        Note over Eng: Document root cause
-    end
+participant "Job Queue" as Queue
+participant "Retry Worker" as Worker
+participant "API Service" as API
+participant "Dead Letter Queue" as DLQ
+participant "Notification Service" as NS
+participant "Incident Management" as IMS
+participant "Engineering Team" as Eng
+Note over Queue: 2-hour retry cycles continue
+loop Retry Attempts
+Queue ->> Worker: Deliver Message
+Worker ->> API: Retry Attempt
+API --> Worker: ✗ Failure
+Worker ->> Queue: Re-queue
+end
+Worker ->> Worker: Check: Total attempts > 20<br/>Duration > 24 hours
+Note over Worker: Max retries exceeded
+Worker ->> DLQ: Move to DLQ<br/>{requestId, failureReason,<br/>totalAttempts: 20,<br/>firstFailure, lastFailure}
+DLQ ->> NS: Send Critical Alert Email<br/>"API call permanently failed<br/>after 20 attempts"
+NS ->> IMS: Trigger Incident<br/>(PagerDuty/Opsgenie)
+IMS ->> Eng: Alert Engineering Team
+Note over Eng: Manual intervention required
+Eng ->> DLQ: Investigate Failed Message
+alt Resolution Found
+Eng ->> DLQ: Reprocess Message
+DLQ ->> Queue: Re-queue with Fix
+else Cannot Resolve
+Eng ->> DLQ: Mark as Handled
+Note over Eng: Document root cause
+end
 ```
-
 ---
-
 ## Case 6: Non-Retryable Error (Client Error)
-
 ```mermaid
-sequenceDiagram
-    participant Client as Client Application
-    participant RH as Retry Handler
-    participant API as API Service
-    participant NS as Notification Service
-    participant Logger as Logging Service
-    
-    Client->>RH: Make API Call
-    RH->>API: Call API
-    activate API
-    API-->>RH: ✗ Failure (400 Bad Request)
-    deactivate API
-    
-    Note over RH: Identify as<br/>non-retryable error<br/>(4xx client error)
-    
-    RH->>Logger: Log Error Details<br/>{statusCode: 400,<br/>errorType: "CLIENT_ERROR",<br/>noRetry: true}
-    
-    RH->>NS: Send Immediate Error Notification<br/>"API call failed with<br/>client error - no retry"
-    
-    RH-->>Client: Return Error Response<br/>(400 Bad Request)
-    
-    Note over Client,Logger: No queuing - immediate failure<br/>Requires client-side fix
+participant "Client Application" as Client
+participant "Retry Handler" as RH
+participant "API Service" as API
+participant "Notification Service" as NS
+participant "Logging Service" as Logger
+Client ->> RH: Make API Call
+RH ->> API: Call API
+activate API
+API --> RH: ✗ Failure (400 Bad Request)
+deactivate API
+Note over RH: Identify as<br/>non-retryable error<br/>(4xx client error)
+RH ->> Logger: Log Error Details<br/>{statusCode: 400,<br/>errorType: "CLIENT_ERROR",<br/>noRetry: true}
+RH ->> NS: Send Immediate Error Notification<br/>"API call failed with<br/>client error - no retry"
+RH --> Client: Return Error Response<br/>(400 Bad Request)
+Note over Client,Logger: No queuing - immediate failure<br/>Requires client-side fix
 ```
-
 ---
-
 ## Case 7: Circuit Breaker Open
-
 ```mermaid
-sequenceDiagram
-    participant Client as Client Application
-    participant CB as Circuit Breaker
-    participant RH as Retry Handler
-    participant Queue as Job Queue
-    participant NS as Notification Service
-    participant API as API Service
-    
-    Client->>CB: Make API Call
-    CB->>CB: Check Circuit State
-    
-    Note over CB: Circuit: OPEN<br/>(too many recent failures)
-    
-    CB->>Queue: Fail Fast - Publish Directly<br/>(skip initial retries)
-    
-    CB->>NS: Send Notification<br/>"Circuit open - API call<br/>queued immediately"
-    
-    CB-->>Client: Return Circuit Open Error
-    
-    Note over CB: Wait for timeout period<br/>(e.g., 30 seconds)
-    
-    Note over CB: Circuit → HALF-OPEN
-    
-    CB->>API: Test Request (single)
-    
-    alt Success
-        API-->>CB: ✓ Success (200)
-        Note over CB: Circuit → CLOSED
-        CB->>NS: Alert: "Circuit closed -<br/>API recovered"
-    else Failure
-        API-->>CB: ✗ Failure
-        Note over CB: Circuit → OPEN again
-        CB->>NS: Alert: "Circuit remains open"
-    end
+participant "Client Application" as Client
+participant "Circuit Breaker" as CB
+participant "Retry Handler" as RH
+participant "Job Queue" as Queue
+participant "Notification Service" as NS
+participant "API Service" as API
+Client ->> CB: Make API Call
+CB ->> CB: Check Circuit State
+Note over CB: Circuit: OPEN<br/>(too many recent failures)
+CB ->> Queue: Fail Fast - Publish Directly<br/>(skip initial retries)
+CB ->> NS: Send Notification<br/>"Circuit open - API call<br/>queued immediately"
+CB --> Client: Return Circuit Open Error
+Note over CB: Wait for timeout period<br/>(e.g., 30 seconds)
+Note over CB: Circuit → HALF-OPEN
+CB ->> API: Test Request (single)
+alt Success
+API --> CB: ✓ Success (200)
+Note over CB: Circuit → CLOSED
+CB ->> NS: Alert: "Circuit closed -<br/>API recovered"
+else Failure
+API --> CB: ✗ Failure
+Note over CB: Circuit → OPEN again
+CB ->> NS: Alert: "Circuit remains open"
+end
 ```
-
 ---
-
 ## Complete Integrated Flow with All Components
-
 ```mermaid
-sequenceDiagram
-    participant Client as Client Application
-    participant CB as Circuit Breaker
-    participant RH as Retry Handler
-    participant API as API Service
-    participant Queue as Job Queue (RabbitMQ/SQS)
-    participant Worker as Retry Worker
-    participant DLQ as Dead Letter Queue
-    participant NS as Notification Service
-    participant Monitor as Monitoring System
-    
-    Client->>CB: Make API Call
-    CB->>CB: Check Circuit State
-    
-    alt Circuit CLOSED
-        CB->>RH: Forward Request
-        
-        RH->>API: Attempt 1
-        
-        alt Success
-            API-->>RH: ✓ Success (200)
-            RH-->>Client: Return Success
-            RH->>Monitor: Log Success Metric
-        else Retryable Failure
-            API-->>RH: ✗ Failure (5xx)
-            
-            loop Immediate Retries (3x)
-                Note over RH: Exponential Backoff
-                RH->>API: Retry Attempt
-                
-                alt Success
-                    API-->>RH: ✓ Success
-                    RH-->>Client: Return Success
-                    RH->>NS: Recovery Alert
-                else Still Failing
-                    API-->>RH: ✗ Failure
-                end
-            end
-            
-            opt All Immediate Retries Failed
-                RH->>Queue: Publish Message<br/>{requestId, attempt: 3,<br/>delay: 3min}
-                RH->>NS: Email: "Queued for retry"
-                RH-->>Client: Return Queued Status
-                
-                Note over Queue: Wait 3 minutes
-                
-                Queue->>Worker: Deliver Message
-                
-                loop Worker Retries (3x)
-                    Worker->>API: Retry Attempt
-                    
-                    alt Success
-                        API-->>Worker: ✓ Success
-                        Worker->>Queue: Remove Message
-                        Worker->>NS: Success Alert
-                    else Still Failing
-                        API-->>Worker: ✗ Failure
-                    end
-                end
-                
-                opt Still Failing After Worker Retries
-                    Worker->>Queue: Republish (2hr delay)
-                    Worker->>NS: Email: "Next retry in 2 hours"
-                    
-                    loop Long-term Retries
-                        Note over Queue: Wait 2 hours
-                        Queue->>Worker: Deliver Message
-                        Worker->>API: Retry Attempt
-                        
-                        alt Success
-                            API-->>Worker: ✓ Success
-                            Worker->>NS: Final Success Alert
-                        else Max Retries Exceeded
-                            Worker->>Worker: Check retry limit (20 attempts)
-                            Worker->>DLQ: Move to DLQ
-                            DLQ->>NS: Critical Alert
-                            DLQ->>Monitor: Trigger Incident
-                        end
-                    end
-                end
-            end
-            
-        else Non-Retryable Failure
-            API-->>RH: ✗ Failure (4xx)
-            RH->>Monitor: Log Client Error
-            RH->>NS: Immediate Error Alert
-            RH-->>Client: Return Error
-        end
-        
-    else Circuit OPEN
-        CB->>Queue: Queue Immediately<br/>(fail fast)
-        CB->>NS: Circuit Open Alert
-        CB-->>Client: Return Circuit Open Error
-        
-        Note over CB: After timeout
-        Note over CB: Circuit → HALF-OPEN
-        
-        CB->>API: Test Request
-        alt Success
-            API-->>CB: ✓ Success
-            Note over CB: Circuit → CLOSED
-        else Failure
-            API-->>CB: ✗ Failure
-            Note over CB: Circuit → OPEN
-        end
-    end
-    
-    Note over Monitor: Continuous Monitoring:<br/>• Queue depth<br/>• Processing rate<br/>• Success rate<br/>• DLQ size<br/>• Circuit breaker state
+participant "Client Application" as Client
+participant "Circuit Breaker" as CB
+participant "Retry Handler" as RH
+participant "API Service" as API
+participant "Job Queue (RabbitMQ/SQS)" as Queue
+participant "Retry Worker" as Worker
+participant "Dead Letter Queue" as DLQ
+participant "Notification Service" as NS
+participant "Monitoring System" as Monitor
+Client ->> CB: Make API Call
+CB ->> CB: Check Circuit State
+alt Circuit CLOSED
+CB ->> RH: Forward Request
+RH ->> API: Attempt 1
+alt Success
+API --> RH: ✓ Success (200)
+RH --> Client: Return Success
+RH ->> Monitor: Log Success Metric
+else Retryable Failure
+API --> RH: ✗ Failure (5xx)
+loop Immediate Retries (3x)
+Note over RH: Exponential Backoff
+RH ->> API: Retry Attempt
+alt Success
+API --> RH: ✓ Success
+RH --> Client: Return Success
+RH ->> NS: Recovery Alert
+else Still Failing
+API --> RH: ✗ Failure
+end
+end
+opt All Immediate Retries Failed
+RH ->> Queue: Publish Message<br/>{requestId, attempt: 3,<br/>delay: 3min}
+RH ->> NS: Email: "Queued for retry"
+RH --> Client: Return Queued Status
+Note over Queue: Wait 3 minutes
+Queue ->> Worker: Deliver Message
+loop Worker Retries (3x)
+Worker ->> API: Retry Attempt
+alt Success
+API --> Worker: ✓ Success
+Worker ->> Queue: Remove Message
+Worker ->> NS: Success Alert
+else Still Failing
+API --> Worker: ✗ Failure
+end
+end
+opt Still Failing After Worker Retries
+Worker ->> Queue: Republish (2hr delay)
+Worker ->> NS: Email: "Next retry in 2 hours"
+loop Long-term Retries
+Note over Queue: Wait 2 hours
+Queue ->> Worker: Deliver Message
+Worker ->> API: Retry Attempt
+alt Success
+API --> Worker: ✓ Success
+Worker ->> NS: Final Success Alert
+else Max Retries Exceeded
+Worker ->> Worker: Check retry limit (20 attempts)
+Worker ->> DLQ: Move to DLQ
+DLQ ->> NS: Critical Alert
+DLQ ->> Monitor: Trigger Incident
+end
+end
+end
+end
+else Non-Retryable Failure
+API --> RH: ✗ Failure (4xx)
+RH ->> Monitor: Log Client Error
+RH ->> NS: Immediate Error Alert
+RH --> Client: Return Error
+end
+else Circuit OPEN
+CB ->> Queue: Queue Immediately<br/>(fail fast)
+CB ->> NS: Circuit Open Alert
+CB --> Client: Return Circuit Open Error
+Note over CB: After timeout
+Note over CB: Circuit → HALF-OPEN
+CB ->> API: Test Request
+alt Success
+API --> CB: ✓ Success
+Note over CB: Circuit → CLOSED
+else Failure
+API --> CB: ✗ Failure
+Note over CB: Circuit → OPEN
+end
+end
+Note over Monitor: Continuous Monitoring:<br/>• Queue depth<br/>• Processing rate<br/>• Success rate<br/>• DLQ size<br/>• Circuit breaker state
 ```
-
 ---
-
 ## Queue-Specific Implementation Patterns
-
 ### RabbitMQ Pattern
-
 ```mermaid
-sequenceDiagram
-    participant Publisher as Publisher
-    participant Exchange as Main Exchange
-    participant Queue as Retry Queue (TTL: 3min)
-    participant DLX as Dead Letter Exchange
-    participant RetryQ as Retry Queue (TTL: 2hr)
-    participant DLQ as Dead Letter Queue
-    participant Consumer as Consumer
-    
-    Publisher->>Exchange: Publish Message
-    Exchange->>Queue: Route to Retry Queue
-    
-    Note over Queue: Message TTL expires (3min)
-    
-    Queue->>DLX: Expired message
-    DLX->>Consumer: Deliver for retry
-    
-    alt Success
-        Consumer->>Consumer: Process Successfully
-    else Failure
-        Consumer->>RetryQ: Republish (TTL: 2hr)
-        
-        Note over RetryQ: Message TTL expires (2hr)
-        
-        RetryQ->>DLX: Expired message
-        DLX->>Consumer: Deliver for retry
-        
-        alt Still Failing
-            Consumer->>Consumer: Check retry count
-            opt Max retries exceeded
-                Consumer->>DLQ: Move to DLQ
-            end
-        end
-    end
+participant "Publisher" as Publisher
+participant "Main Exchange" as Exchange
+participant "Retry Queue (TTL: 3min)" as Queue
+participant "Dead Letter Exchange" as DLX
+participant "Retry Queue (TTL: 2hr)" as RetryQ
+participant "Dead Letter Queue" as DLQ
+participant "Consumer" as Consumer
+Publisher ->> Exchange: Publish Message
+Exchange ->> Queue: Route to Retry Queue
+Note over Queue: Message TTL expires (3min)
+Queue ->> DLX: Expired message
+DLX ->> Consumer: Deliver for retry
+alt Success
+Consumer ->> Consumer: Process Successfully
+else Failure
+Consumer ->> RetryQ: Republish (TTL: 2hr)
+Note over RetryQ: Message TTL expires (2hr)
+RetryQ ->> DLX: Expired message
+DLX ->> Consumer: Deliver for retry
+alt Still Failing
+Consumer ->> Consumer: Check retry count
+opt Max retries exceeded
+Consumer ->> DLQ: Move to DLQ
+end
+end
+end
 ```
-
 ### AWS SQS Pattern
-
 ```mermaid
-sequenceDiagram
-    participant Producer as Producer
-    participant MainQ as Main Queue
-    participant Consumer as Consumer
-    participant RetryQ as Retry Queue<br/>(visibility: 3min)
-    participant DLQ as Dead Letter Queue
-    
-    Producer->>MainQ: Send Message
-    MainQ->>Consumer: Receive Message
-    
-    Consumer->>Consumer: Process Message
-    
-    alt Success
-        Consumer->>MainQ: Delete Message
-    else Failure
-        Note over Consumer: Don't delete message
-        Note over MainQ: Visibility timeout expires
-        
-        MainQ->>Consumer: Redeliver Message
-        Consumer->>Consumer: Increment retry count
-        
-        alt Retry limit not reached
-            Consumer->>RetryQ: Send to Retry Queue<br/>(DelaySeconds or visibility)
-            Consumer->>MainQ: Delete from Main Queue
-            
-            Note over RetryQ: Wait for visibility timeout
-            
-            RetryQ->>Consumer: Receive Message
-        else Max retries exceeded
-            Consumer->>DLQ: Send to DLQ
-            Consumer->>MainQ: Delete from Main Queue
-        end
-    end
+participant "Producer" as Producer
+participant "Main Queue" as MainQ
+participant "Consumer" as Consumer
+participant "Retry Queue<br/>(visibility: 3min)" as RetryQ
+participant "Dead Letter Queue" as DLQ
+Producer ->> MainQ: Send Message
+MainQ ->> Consumer: Receive Message
+Consumer ->> Consumer: Process Message
+alt Success
+Consumer ->> MainQ: Delete Message
+else Failure
+Note over Consumer: Don't delete message
+Note over MainQ: Visibility timeout expires
+MainQ ->> Consumer: Redeliver Message
+Consumer ->> Consumer: Increment retry count
+alt Retry limit not reached
+Consumer ->> RetryQ: Send to Retry Queue<br/>(DelaySeconds or visibility)
+Consumer ->> MainQ: Delete from Main Queue
+Note over RetryQ: Wait for visibility timeout
+RetryQ ->> Consumer: Receive Message
+else Max retries exceeded
+Consumer ->> DLQ: Send to DLQ
+Consumer ->> MainQ: Delete from Main Queue
+end
+end
 ```
-
 ### GCP Pub/Sub Pattern
-
 ```mermaid
-sequenceDiagram
-    participant Publisher as Publisher
-    participant Topic as Main Topic
-    participant Sub as Subscription<br/>(ack deadline: 60s)
-    participant Subscriber as Subscriber
-    participant RetryTopic as Retry Topic
-    participant DLQ as Dead Letter Topic
-    
-    Publisher->>Topic: Publish Message
-    Topic->>Sub: Push to Subscription
-    Sub->>Subscriber: Deliver Message
-    
-    Subscriber->>Subscriber: Process Message
-    
-    alt Success
-        Subscriber->>Sub: Acknowledge Message
-    else Failure
-        Note over Subscriber: Don't acknowledge
-        Note over Sub: Ack deadline expires
-        
-        Sub->>Subscriber: Redeliver (exponential backoff)
-        
-        alt Still Failing
-            Subscriber->>Subscriber: Check delivery attempts
-            
-            opt Max attempts exceeded
-                Sub->>DLQ: Forward to Dead Letter Topic
-                Note over DLQ: Manual intervention required
-            end
-        else Success
-            Subscriber->>Sub: Acknowledge Message
-        end
-    end
+participant "Publisher" as Publisher
+participant "Main Topic" as Topic
+participant "Subscription<br/>(ack deadline: 60s)" as Sub
+participant "Subscriber" as Subscriber
+participant "Retry Topic" as RetryTopic
+participant "Dead Letter Topic" as DLQ
+Publisher ->> Topic: Publish Message
+Topic ->> Sub: Push to Subscription
+Sub ->> Subscriber: Deliver Message
+Subscriber ->> Subscriber: Process Message
+alt Success
+Subscriber ->> Sub: Acknowledge Message
+else Failure
+Note over Subscriber: Don't acknowledge
+Note over Sub: Ack deadline expires
+Sub ->> Subscriber: Redeliver (exponential backoff)
+alt Still Failing
+Subscriber ->> Subscriber: Check delivery attempts
+opt Max attempts exceeded
+Sub ->> DLQ: Forward to Dead Letter Topic
+Note over DLQ: Manual intervention required
+end
+else Success
+Subscriber ->> Sub: Acknowledge Message
+end
+end
 ```
-
 ---
-
 ## Monitoring Dashboard Flow
-
 ```mermaid
-sequenceDiagram
-    participant Sys as System Components
-    participant Metrics as Metrics Collector
-    participant Dashboard as Monitoring Dashboard
-    participant Alert as Alert Manager
-    participant Oncall as On-Call Engineer
-    
-    loop Every 10 seconds
-        Sys->>Metrics: Send Metrics<br/>• Queue depth<br/>• Processing rate<br/>• Error rate<br/>• Circuit breaker state
-    end
-    
-    Metrics->>Dashboard: Update Real-time Dashboard
-    
-    Metrics->>Alert: Evaluate Alert Rules
-    
-    alt Threshold Exceeded
-        Alert->>Alert: Check:<br/>• Queue depth > 1000<br/>• DLQ size > 10<br/>• Error rate > 50%<br/>• Circuit open > 5min
-        
-        Alert->>Oncall: Send Alert<br/>(PagerDuty/Slack)
-        
-        Oncall->>Dashboard: View Dashboard
-        Oncall->>Sys: Investigate & Remediate
-        
-        Sys->>Metrics: Metrics improve
-        Alert->>Oncall: Send Resolution Alert
-    end
+participant "System Components" as Sys
+participant "Metrics Collector" as Metrics
+participant "Monitoring Dashboard" as Dashboard
+participant "Alert Manager" as Alert
+participant "On-Call Engineer" as Oncall
+loop Every 10 seconds
+Sys ->> Metrics: Send Metrics<br/>• Queue depth<br/>• Processing rate<br/>• Error rate<br/>• Circuit breaker state
+end
+Metrics ->> Dashboard: Update Real-time Dashboard
+Metrics ->> Alert: Evaluate Alert Rules
+alt Threshold Exceeded
+Alert ->> Alert: Check:<br/>• Queue depth > 1000<br/>• DLQ size > 10<br/>• Error rate > 50%<br/>• Circuit open > 5min
+Alert ->> Oncall: Send Alert<br/>(PagerDuty/Slack)
+Oncall ->> Dashboard: View Dashboard
+Oncall ->> Sys: Investigate & Remediate
+Sys ->> Metrics: Metrics improve
+Alert ->> Oncall: Send Resolution Alert
+end
 ```
-
 ---
-
 ## Error Classification Decision Tree
-
 ```mermaid
 graph TD
-    Start[API Call Failed] --> CheckStatus{Check HTTP<br/>Status Code}
-    
-    CheckStatus -->|5xx| ServerError[Server Error]
-    CheckStatus -->|4xx| ClientError[Client Error]
-    CheckStatus -->|Timeout| NetworkError[Network Error]
-    CheckStatus -->|Connection Refused| ConnectionError[Connection Error]
-    
-    ServerError --> Retryable{Retryable?}
-    ClientError --> NonRetryable[Non-Retryable]
-    NetworkError --> Retryable
-    ConnectionError --> Retryable
-    
-    Retryable -->|503, 504, 502| ImmediateRetry[Immediate Retry<br/>with Backoff]
-    Retryable -->|500, 429| CheckRetryAfter{Has<br/>Retry-After<br/>Header?}
-    
-    CheckRetryAfter -->|Yes| RespectHeader[Wait for<br/>Retry-After Duration]
-    CheckRetryAfter -->|No| ImmediateRetry
-    
-    NonRetryable --> LogError[Log Error]
-    NonRetryable --> NotifyUser[Notify User]
-    NonRetryable --> End[End - No Retry]
-    
-    ImmediateRetry --> CheckAttempts{Attempts < 3?}
-    RespectHeader --> CheckAttempts
-    
-    CheckAttempts -->|Yes| BackoffRetry[Exponential Backoff<br/>& Retry]
-    CheckAttempts -->|No| QueueJob[Publish to<br/>Job Queue]
-    
-    BackoffRetry --> Success{Success?}
-    QueueJob --> WorkerRetry[Worker Retry Process]
-    
-    Success -->|Yes| Complete[Complete Successfully]
-    Success -->|No| CheckAttempts
-    
-    WorkerRetry --> LongRetry{Success after<br/>long-term retries?}
-    
-    LongRetry -->|Yes| Complete
-    LongRetry -->|No| CheckMaxRetries{Max retries<br/>exceeded?}
-    
-    CheckMaxRetries -->|Yes| MoveToDLQ[Move to DLQ]
-    CheckMaxRetries -->|No| ContinueRetry[Continue 2hr<br/>Retry Cycle]
-    
-    ContinueRetry --> WorkerRetry
-    MoveToDLQ --> ManualIntervention[Manual Intervention]
+Start[API Call Failed] --> CheckStatus{Check HTTP<br/>Status Code}
+CheckStatus -->|5xx| ServerError[Server Error]
+CheckStatus -->|4xx| ClientError[Client Error]
+CheckStatus -->|Timeout| NetworkError[Network Error]
+CheckStatus -->|Connection Refused| ConnectionError[Connection Error]
+ServerError --> Retryable{Retryable?}
+ClientError --> NonRetryable[Non-Retryable]
+NetworkError --> Retryable
+ConnectionError --> Retryable
+Retryable -->|503, 504, 502| ImmediateRetry[Immediate Retry<br/>with Backoff]
+Retryable -->|500, 429| CheckRetryAfter{Has<br/>Retry-After<br/>Header?}
+CheckRetryAfter -->|Yes| RespectHeader[Wait for<br/>Retry-After Duration]
+CheckRetryAfter -->|No| ImmediateRetry
+NonRetryable --> LogError[Log Error]
+NonRetryable --> NotifyUser[Notify User]
+NonRetryable --> End[End - No Retry]
+ImmediateRetry --> CheckAttempts{Attempts < 3?}
+RespectHeader --> CheckAttempts
+CheckAttempts -->|Yes| BackoffRetry[Exponential Backoff<br/>& Retry]
+CheckAttempts -->|No| QueueJob[Publish to<br/>Job Queue]
+BackoffRetry --> Success{Success?}
+QueueJob --> WorkerRetry[Worker Retry Process]
+Success -->|Yes| Complete[Complete Successfully]
+Success -->|No| CheckAttempts
+WorkerRetry --> LongRetry{Success after<br/>long-term retries?}
+LongRetry -->|Yes| Complete
+LongRetry -->|No| CheckMaxRetries{Max retries<br/>exceeded?}
+CheckMaxRetries -->|Yes| MoveToDLQ[Move to DLQ]
+CheckMaxRetries -->|No| ContinueRetry[Continue 2hr<br/>Retry Cycle]
+ContinueRetry --> WorkerRetry
+MoveToDLQ --> ManualIntervention[Manual Intervention]
 ```
+@enduml
