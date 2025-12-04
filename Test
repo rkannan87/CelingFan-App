@@ -392,6 +392,66 @@ end
 ---
 ## Error Classification Decision Tree
 ```mermaid
+@startuml
+start
+:API Call Failed;
+
+if (Check HTTP\nStatus Code?) then (5xx)
+  :Server Error;
+  :Retryable?;
+elseif (4xx) then
+  :Client Error;
+  :Non-Retryable;
+  :Log Error;
+  :Notify User;
+  stop
+elseif (Timeout) then
+  :Network Error;
+  :Retryable?;
+elseif (Connection Refused) then
+  :Connection Error;
+  :Retryable?;
+endif
+
+if (Retryable?) then (503, 504, 502)
+  :Immediate Retry\nwith Backoff;
+elseif (500, 429) then
+  if (Has\nRetry-After\nHeader?) then (Yes)
+    :Wait for\nRetry-After Duration;
+  else (No)
+    :Immediate Retry\nwith Backoff;
+  endif
+endif
+
+repeat
+  if (Attempts < 3?) then (Yes)
+    :Exponential Backoff\n& Retry;
+    if (Success?) then (Yes)
+      :Complete Successfully;
+      stop
+    else (No)
+    endif
+  else (No)
+    :Publish to\nJob Queue;
+    :Worker Retry Process;
+    repeat
+      if (Success after\nlong-term retries?) then (Yes)
+        :Complete Successfully;
+        stop
+      else (No)
+        if (Max retries\nexceeded?) then (Yes)
+          :Move to DLQ;
+          :Manual Intervention;
+          stop
+        else (No)
+          :Continue 2hr\nRetry Cycle;
+        endif
+      endif
+    repeat while
+  endif
+repeat while
+
+@enduml
 graph TD
 Start[API Call Failed] --> CheckStatus{Check HTTP<br/>Status Code}
 CheckStatus -->|5xx| ServerError[Server Error]
