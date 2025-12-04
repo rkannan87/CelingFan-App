@@ -1,0 +1,302 @@
+I'll show you sequence flows for job queue-based retry handling across different scenarios.
+Architecture Overview
+API Call → Initial Attempt → Success/Failure → Job Queue → Retry Handler → Notification Service
+Sequence Flows for All Cases
+Case 1: Successful API Call (Happy Path)
+Client Application
+    ↓
+[1] Make API Call
+    ↓
+API Service → ✓ Success (200)
+    ↓
+[2] Process Response
+    ↓
+[3] Log Success Metric
+    ↓
+END
+
+Case 2: Transient Failure → Retry → Success
+Client Application
+    ↓
+[1] Make API Call (Attempt 1)
+    ↓
+API Service → ✗ Failure (503)
+    ↓
+[2] Exponential Backoff (1s)
+    ↓
+[3] Retry Attempt 2
+    ↓
+API Service → ✗ Failure (502)
+    ↓
+[4] Exponential Backoff (2s)
+    ↓
+[5] Retry Attempt 3
+    ↓
+API Service → ✓ Success (200)
+    ↓
+[6] Log: "Succeeded after 3 attempts"
+    ↓
+[7] Send Success Notification (recovery alert)
+    ↓
+END
+
+Case 3: Initial Retries Exhausted → Queue for Later
+Client Application
+    ↓
+[1] Make API Call (Attempt 1)
+    ↓
+API Service → ✗ Failure (503)
+    ↓
+[2] Retry with Exponential Backoff
+    ↓
+[3] Attempt 2 → ✗ Failure
+    ↓
+[4] Attempt 3 → ✗ Failure
+    ↓
+[5] Initial retries exhausted
+    ↓
+[6] Publish to Job Queue
+    |   {
+    |     "requestId": "req-123",
+    |     "payload": {...},
+    |     "attempt": 3,
+    |     "nextRetry": "2024-12-02T15:05:00Z",
+    |     "delay": "3min"
+    |   }
+    ↓
+Job Queue (RabbitMQ/SQS/Pub/Sub)
+    ↓
+[7] Send Email Notification
+    "Initial retries failed. Scheduled for retry in 3 mins"
+    ↓
+[8] Wait 3 minutes (message visibility timeout)
+    ↓
+Retry Worker picks up message
+    ↓
+[9] Attempt 4
+    ↓
+API Service → ✗ Failure (504)
+    ↓
+[10] Attempt 5 → ✗ Failure
+    ↓
+[11] Attempt 6 → ✗ Failure
+    ↓
+[12] Publish back to queue with 2-hour delay
+    |   {
+    |     "requestId": "req-123",
+    |     "attempt": 6,
+    |     "nextRetry": "2024-12-02T17:05:00Z",
+    |     "delay": "2hours"
+    |   }
+    ↓
+[13] Send Email Notification
+    "Still failing. Next retry in 2 hours"
+    ↓
+[Continues with 2-hour intervals...]
+
+Case 4: Long-term Retry → Eventually Succeeds
+Job Queue (2-hour retry cycle)
+    ↓
+[1] Worker picks message after 2 hours
+    ↓
+[2] Attempt 7 → ✗ Failure
+    ↓
+[3] Attempt 8 → ✗ Failure
+    ↓
+[4] Attempt 9 → ✗ Failure
+    ↓
+[5] Re-queue for another 2 hours
+    ↓
+[6] Wait 2 hours...
+    ↓
+[7] Attempt 10 → ✗ Failure
+    ↓
+[8] Attempt 11 → ✗ Failure
+    ↓
+[9] Attempt 12 → ✓ Success!
+    ↓
+[10] Remove from queue
+    ↓
+[11] Send Success Email
+    "API call succeeded after 12 attempts over 4+ hours"
+    ↓
+[12] Log recovery metrics
+    ↓
+END
+
+Case 5: Permanent Failure → Dead Letter Queue
+Job Queue (2-hour retry cycle)
+    ↓
+[1] Retry attempts continue...
+    ↓
+[2] Check: Total attempts > Max (e.g., 20 attempts / 24 hours)
+    ↓
+[3] Move to Dead Letter Queue (DLQ)
+    ↓
+Dead Letter Queue
+    |   {
+    |     "requestId": "req-123",
+    |     "failureReason": "Max retries exceeded",
+    |     "totalAttempts": 20,
+    |     "firstFailure": "2024-12-02T12:00:00Z",
+    |     "lastFailure": "2024-12-03T12:00:00Z"
+    |   }
+    ↓
+[4] Send Critical Alert Email
+    "API call permanently failed after 20 attempts"
+    ↓
+[5] Trigger incident management system
+    ↓
+[6] Manual intervention required
+    ↓
+[7] Engineering investigates DLQ
+
+Case 6: Non-Retryable Error (Client Error)
+Client Application
+    ↓
+[1] Make API Call
+    ↓
+API Service → ✗ Failure (400 Bad Request)
+    ↓
+[2] Identify as non-retryable error
+    ↓
+[3] Log error details
+    ↓
+[4] Send immediate error notification
+    "API call failed with client error - no retry"
+    ↓
+[5] Return error to caller
+    ↓
+END (No queuing)
+
+Case 7: Circuit Breaker Open
+Client Application
+    ↓
+[1] Check Circuit Breaker state
+    ↓
+Circuit Breaker: OPEN (too many failures)
+    ↓
+[2] Fail fast - don't call API
+    ↓
+[3] Publish directly to Job Queue
+    |   (skip initial retries)
+    ↓
+[4] Send notification
+    "Circuit open - API call queued immediately"
+    ↓
+[5] Wait for circuit to close
+    ↓
+[After timeout, circuit → HALF-OPEN]
+    ↓
+[6] Test with single request
+    ↓
+If success → Circuit CLOSED
+If failure → Circuit OPEN again
+
+Complete Flow with All Components
+┌─────────────────┐
+│ Client App      │
+└────────┬────────┘
+         │
+         ↓
+┌────────────────────────────────┐
+│ Retry Handler with Circuit     │
+│ Breaker                         │
+│  • Immediate retries (3x)      │
+│  • Exponential backoff         │
+│  • Error classification        │
+└────────┬───────────────────────┘
+         │
+         ↓
+    [Decision Point]
+         │
+    ┌────┴────┐
+    │         │
+Success    Failure
+    │         │
+    │         ↓
+    │    [Check Error Type]
+    │         │
+    │    ┌────┴────┐
+    │    │         │
+    │  Retryable  Non-Retryable
+    │    │         │
+    │    │         └──→ Alert & Log
+    │    │
+    │    ↓
+    │  [Check Attempts]
+    │    │
+    │    ↓
+    │  < 3 attempts?
+    │    │
+    │    ├─Yes→ Backoff & Retry
+    │    │
+    │    └─No→ Publish to Queue
+    │              │
+    │              ↓
+    │    ┌─────────────────────┐
+    │    │   Job Queue         │
+    │    │  (RabbitMQ/SQS/     │
+    │    │   Kafka/Redis)      │
+    │    └──────────┬──────────┘
+    │               │
+    │               ↓
+    │    ┌─────────────────────┐
+    │    │  Retry Worker       │
+    │    │  • 3min delay (3x)  │
+    │    │  • 2hr delay (loop) │
+    │    └──────────┬──────────┘
+    │               │
+    │          ┌────┴────┐
+    │          │         │
+    │      Success   Max Retries
+    │          │         │
+    │          │         ↓
+    │          │    ┌─────────────┐
+    │          │    │ Dead Letter │
+    │          │    │   Queue     │
+    │          │    └──────┬──────┘
+    │          │           │
+    └──────────┴───────────┴──→ Notification Service
+                                 • Email
+
+Queue-Specific Implementation Details
+RabbitMQ
+
+Use message TTL for delays
+Dead letter exchange for DLQ
+Priority queue for urgent retries
+
+AWS SQS
+
+Visibility timeout for delays
+DLQ configured automatically
+Standard queue for normal, FIFO for ordered
+
+GCP Pub/Sub
+
+Subscription with acknowledgment deadline
+Exponential backoff policies built-in
+Dead letter topic configuration
+
+Apache Kafka
+
+Separate retry topics (retry-3min, retry-2hour)
+Consumer lag monitoring
+Compacted topics for idempotency tracking
+
+Redis Queue
+
+Sorted sets with timestamp for scheduling
+Lua scripts for atomic operations
+Redis Streams for reliability
+
+
+Monitoring Points
+
+Queue depth - how many pending retries
+Processing rate - retries per minute
+Success rate - after N attempts
+DLQ size - permanent failures
+Average retry count - before success
+Circuit breaker state - open/closed/half-open
