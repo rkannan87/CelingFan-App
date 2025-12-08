@@ -657,3 +657,57 @@ repeat
 repeat while (immediate_attempts < 3 AND elapsed_time < 24)
 
 @enduml
+What is DLQ?
+A safety net for failed operations that can't be processed after multiple retries.
+Key Benefits:
+
+✅ No Data Loss - Failed jobs are preserved
+✅ Non-Blocking - Main queue keeps flowing
+✅ Manual Recovery - Team can investigate and retry
+✅ Pattern Detection - Identify systemic issues
+✅ Audit Trail - Full history of failures
+✅ Graceful Degradation - System remains operational
+
+When Jobs Move to DLQ:
+
+❌ Max retry attempts exhausted
+❌ Non-retryable error detected
+❌ Job timeout exceeded
+❌ Manual move by operations team
+
+What You Can Do with DLQ:
+
+👀 Inspect failed jobs
+🔄 Retry individual jobs
+🔄 Bulk retry all jobs
+📊 Analyze error patterns
+🗑️ Remove invalid jobs
+📈 Monitor trends
+
+What is a Dead Letter Queue?
+A Dead Letter Queue (DLQ) is a special queue that holds messages or jobs that cannot be processed successfully after multiple retry attempts. It's like a "last resort" holding area for failed operations.
+DLQ is essential for production systems - it's the difference between data loss and graceful failure recovery! 
+✅ Delayed jobs
+✅ Job priorities
+✅ Retries
+✅ Rate limiting
+✅ Progress tracking
+✅ Job inspection
+✅ Stalled detection
+✅ Bull Board UI
+✅ Redis Cluster
+✅ TypeScript
+✅ Active support
+✅ Rich features
+✅ Production-grade
+1. Actively maintained
+2. Feature-complete
+3. Production-tested at scale
+4. Better TypeScript support
+5. Rich ecosystem (Bull Board)
+6. Future-proof
+7. Better for teams
+8. Better debugging
+9. Better monitoring
+10. Industry standard
+
