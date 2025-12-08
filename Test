@@ -489,164 +489,171 @@ MoveToDLQ --> ManualIntervention[Manual Intervention]
 
 @startuml
 !define RETRY_INDEX_VAR retry_index = 0
-!define MAX_RETRIES 3
-!define WORKER_MAX_RETRIES 10
+!define MAX_IMMEDIATE_RETRIES 3
+!define WORKER_RETRY_INTERVAL_HOURS 2
+!define MAX_RETRY_DURATION_HOURS 24
 
 start
-:Initialize retry_index = 0;
+:Initialize Variables\nretry_index = 0\nstart_time = current_timestamp\nelapsed_time = 0;
 :API Call Failed;
-:Log Initial Failure\n(Timestamp: {timestamp}\nEndpoint: {endpoint}\nRequest ID: {request_id}\nRetry Index: 0);
-:Send Alert to Technical Team\n**INITIAL FAILURE**\nSeverity: WARNING\nRetry Index: 0;
+:Log Initial Failure\n(Timestamp: {timestamp}\nEndpoint: {endpoint}\nRequest ID: {request_id}\nRetry Index: 0\nStart Time: {start_time});
 
 if (Check HTTP\nStatus Code?) then (5xx)
   :Server Error;
-  :Log Server Error\n(Retry Index: {retry_index}\nStatus Code: {status}\nResponse Body: {body}\nServer Headers: {headers});
-  :Send Alert to Technical Team\n**SERVER ERROR - 5xx**\nSeverity: HIGH\nRetry Index: {retry_index}\nStatus: {status_code};
+  :Log Server Error\n(Retry Index: {retry_index}\nStatus Code: {status}\nResponse Body: {body}\nServer Headers: {headers}\nElapsed Time: {elapsed_time}h);
   :Retryable?;
   
 elseif (4xx) then
   :Client Error;
   if (Error Type?) then (400 Bad Request)
-    :Log Validation Error\n(Retry Index: {retry_index}\nInvalid Fields: {fields}\nRequest Payload: {payload}\nValidation Messages: {messages});
-    :Send Alert to Technical Team\n**DATA VALIDATION ERROR - 400**\nSeverity: CRITICAL\nRetry Index: {retry_index}\nInvalid Fields: {fields}\nPayload Sample: {payload_sample};
+    :Log Validation Error\n(Retry Index: {retry_index}\nInvalid Fields: {fields}\nRequest Payload: {payload}\nValidation Messages: {messages}\nElapsed Time: {elapsed_time}h);
     
   elseif (401 Unauthorized) then
-    :Log Auth Error\n(Retry Index: {retry_index}\nToken Status: {token_status}\nAuth Method: {auth_method}\nExpiry Time: {expiry});
-    :Send Alert to Technical Team\n**AUTHENTICATION ERROR - 401**\nSeverity: CRITICAL\nRetry Index: {retry_index}\nAuth Method: {auth_method}\nToken Status: {token_status};
+    :Log Auth Error\n(Retry Index: {retry_index}\nToken Status: {token_status}\nAuth Method: {auth_method}\nExpiry Time: {expiry}\nElapsed Time: {elapsed_time}h);
     
   elseif (403 Forbidden) then
-    :Log Permission Error\n(Retry Index: {retry_index}\nResource: {resource}\nRequired Permissions: {permissions}\nUser Context: {user});
-    :Send Alert to Technical Team\n**PERMISSION ERROR - 403**\nSeverity: CRITICAL\nRetry Index: {retry_index}\nResource: {resource}\nUser: {user_id};
+    :Log Permission Error\n(Retry Index: {retry_index}\nResource: {resource}\nRequired Permissions: {permissions}\nUser Context: {user}\nElapsed Time: {elapsed_time}h);
     
   elseif (404 Not Found) then
-    :Log Resource Error\n(Retry Index: {retry_index}\nRequested Resource: {resource}\nEndpoint: {endpoint}\nParameters: {params});
-    :Send Alert to Technical Team\n**RESOURCE NOT FOUND - 404**\nSeverity: HIGH\nRetry Index: {retry_index}\nResource: {resource}\nEndpoint: {endpoint};
+    :Log Resource Error\n(Retry Index: {retry_index}\nRequested Resource: {resource}\nEndpoint: {endpoint}\nParameters: {params}\nElapsed Time: {elapsed_time}h);
     
   elseif (409 Conflict) then
-    :Log Conflict Error\n(Retry Index: {retry_index}\nConflicting Data: {conflict_data}\nCurrent State: {current_state}\nRequested State: {requested_state});
-    :Send Alert to Technical Team\n**DATA CONFLICT ERROR - 409**\nSeverity: HIGH\nRetry Index: {retry_index}\nConflict Details: {conflict_summary};
+    :Log Conflict Error\n(Retry Index: {retry_index}\nConflicting Data: {conflict_data}\nCurrent State: {current_state}\nRequested State: {requested_state}\nElapsed Time: {elapsed_time}h);
     
   elseif (422 Unprocessable) then
-    :Log Data Format Error\n(Retry Index: {retry_index}\nSchema Validation Errors: {errors}\nData Structure: {structure}\nExpected Format: {format});
-    :Send Alert to Technical Team\n**DATA FORMAT ERROR - 422**\nSeverity: CRITICAL\nRetry Index: {retry_index}\nSchema Errors: {validation_errors}\nExpected vs Actual: {comparison};
+    :Log Data Format Error\n(Retry Index: {retry_index}\nSchema Validation Errors: {errors}\nData Structure: {structure}\nExpected Format: {format}\nElapsed Time: {elapsed_time}h);
     
   else (Other 4xx)
-    :Log Generic Client Error\n(Retry Index: {retry_index}\nStatus Code: {status}\nError Message: {message}\nRequest Details: {details});
-    :Send Alert to Technical Team\n**CLIENT ERROR - 4xx**\nSeverity: HIGH\nRetry Index: {retry_index}\nStatus: {status_code};
+    :Log Generic Client Error\n(Retry Index: {retry_index}\nStatus Code: {status}\nError Message: {message}\nRequest Details: {details}\nElapsed Time: {elapsed_time}h);
   endif
   
   :Non-Retryable;
   :Store in Error Database\n(Permanent Record with retry_index);
-  :Send FINAL Alert to Technical Team\n**NON-RETRYABLE ERROR**\nSeverity: CRITICAL\nTotal Retry Index: {retry_index}\nAction: MANUAL INTERVENTION REQUIRED;
-  :Create Incident Ticket\n(Jira/ServiceNow)\nRetry Index: {retry_index};
   :Notify User;
   stop
   
 elseif (Timeout) then
   :Network Error;
-  :Log Timeout\n(Retry Index: {retry_index}\nDuration: {duration}\nEndpoint: {endpoint}\nNetwork Conditions: {conditions});
-  :Send Alert to Technical Team\n**NETWORK TIMEOUT**\nSeverity: MEDIUM\nRetry Index: {retry_index}\nTimeout Duration: {duration}s;
+  :Log Timeout\n(Retry Index: {retry_index}\nDuration: {duration}\nEndpoint: {endpoint}\nNetwork Conditions: {conditions}\nElapsed Time: {elapsed_time}h);
   :Retryable?;
   
 elseif (Connection Refused) then
   :Connection Error;
-  :Log Connection Failure\n(Retry Index: {retry_index}\nHost: {host}\nPort: {port}\nDNS Resolution: {dns}\nNetwork Route: {route});
-  :Send Alert to Technical Team\n**CONNECTION REFUSED**\nSeverity: HIGH\nRetry Index: {retry_index}\nHost: {host}:{port};
+  :Log Connection Failure\n(Retry Index: {retry_index}\nHost: {host}\nPort: {port}\nDNS Resolution: {dns}\nNetwork Route: {route}\nElapsed Time: {elapsed_time}h);
   :Retryable?;
   
 elseif (Data Parsing Error) then
-  :Log Parse Error\n(Retry Index: {retry_index}\nRaw Response: {raw_response}\nExpected Format: {format}\nParse Exception: {exception}\nCharacter Position: {position});
+  :Log Parse Error\n(Retry Index: {retry_index}\nRaw Response: {raw_response}\nExpected Format: {format}\nParse Exception: {exception}\nCharacter Position: {position}\nElapsed Time: {elapsed_time}h);
   :Store Raw Response\n(For Analysis with retry_index);
-  :Send Alert to Technical Team\n**DATA PARSING ERROR**\nSeverity: CRITICAL\nRetry Index: {retry_index}\nParse Exception: {exception}\nResponse Sample: {sample}\nAction: CHECK DATA FORMAT;
   :Non-Retryable;
-  :Create Incident Ticket;
+  :Send Alert to Technical Team\n**DATA PARSING ERROR - NON-RETRYABLE**\nSeverity: CRITICAL\nRetry Index: {retry_index}\nParse Exception: {exception}\nElapsed Time: {elapsed_time}h\nAction: IMMEDIATE REVIEW REQUIRED;
   stop
   
 elseif (Data Validation Error) then
-  :Log Validation Error\n(Retry Index: {retry_index}\nFailed Rules: {rules}\nData Sample: {data}\nSchema Version: {schema_version}\nBusiness Rules: {business_rules});
+  :Log Validation Error\n(Retry Index: {retry_index}\nFailed Rules: {rules}\nData Sample: {data}\nSchema Version: {schema_version}\nBusiness Rules: {business_rules}\nElapsed Time: {elapsed_time}h);
   :Store Invalid Data\n(Quarantine Database with retry_index);
-  :Send Alert to Technical Team\n**DATA VALIDATION ERROR**\nSeverity: CRITICAL\nRetry Index: {retry_index}\nFailed Rules: {rules_list}\nData Sample: {data_sample}\nAction: REVIEW DATA QUALITY;
   :Non-Retryable;
-  :Create Incident Ticket;
+  :Send Alert to Technical Team\n**DATA VALIDATION ERROR - NON-RETRYABLE**\nSeverity: CRITICAL\nRetry Index: {retry_index}\nFailed Rules: {rules}\nElapsed Time: {elapsed_time}h\nAction: IMMEDIATE REVIEW REQUIRED;
   stop
 endif
 
 if (Retryable?) then (503, 504, 502)
   :retry_index++;
   :Immediate Retry\nwith Backoff;
-  :Log Retry Attempt\n(Retry Index: {retry_index}\nBackoff Duration: {backoff}s\nNext Attempt Time: {next_time});
-  :Send Alert to Technical Team\n**RETRY INITIATED**\nSeverity: INFO\nRetry Index: {retry_index}/{MAX_RETRIES}\nBackoff: {backoff}s;
+  :Log Retry Attempt\n(Retry Index: {retry_index}\nBackoff Duration: {backoff}s\nNext Attempt Time: {next_time}\nElapsed Time: {elapsed_time}h);
   
 elseif (500, 429) then
   :retry_index++;
   if (Has\nRetry-After\nHeader?) then (Yes)
     :Wait for\nRetry-After Duration;
-    :Log Retry Schedule\n(Retry Index: {retry_index}\nWait Duration: {wait}\nRetry Time: {retry_time});
-    :Send Alert to Technical Team\n**SCHEDULED RETRY**\nSeverity: INFO\nRetry Index: {retry_index}\nWait Duration: {wait}s;
+    :Log Retry Schedule\n(Retry Index: {retry_index}\nWait Duration: {wait}\nRetry Time: {retry_time}\nElapsed Time: {elapsed_time}h);
   else (No)
     :Immediate Retry\nwith Backoff;
-    :Log Retry Attempt\n(Retry Index: {retry_index}\nBackoff Duration: {backoff}s);
-    :Send Alert to Technical Team\n**RETRY INITIATED**\nSeverity: INFO\nRetry Index: {retry_index}/{MAX_RETRIES};
+    :Log Retry Attempt\n(Retry Index: {retry_index}\nBackoff Duration: {backoff}s\nElapsed Time: {elapsed_time}h);
   endif
 endif
 
+:immediate_attempts = 0;
+
 repeat
-  if (Attempts < 3?) then (Yes)
+  :immediate_attempts++;
+  :Calculate elapsed_time\n= (current_timestamp - start_time) / 3600;
+  
+  if (elapsed_time >= 24?) then (Yes)
+    :Log Max Duration Exceeded\n(Retry Index: {retry_index}\nImmediate Attempts: {immediate_attempts}\nElapsed Time: {elapsed_time}h\nStatus: MAX_DURATION_EXCEEDED);
+    
+    :Send Alert to Technical Team\n**🚨 CRITICAL: 24 HOUR RETRY LIMIT EXCEEDED 🚨**\nSeverity: CRITICAL\nRetry Index: {retry_index}\nImmediate Attempts: {immediate_attempts}\nElapsed Time: {elapsed_time} hours\nStart Time: {start_time}\nError Type: {error_type}\nEndpoint: {endpoint}\nRequest ID: {request_id}\n⚠️ IMMEDIATE ESCALATION REQUIRED ⚠️;
+    
+    :Move to DLQ;
+    :Escalate to On-Call Engineer;
+    :Manual Intervention Required;
+    stop
+  endif
+  
+  if (immediate_attempts < 3?) then (Yes)
     :Exponential Backoff\n& Retry;
-    :Log Retry Execution\n(Retry Index: {retry_index}\nAttempt: {attempt}/3\nTimestamp: {timestamp}\nBackoff Calculation: {calc});
-    :Send Alert to Technical Team\n**EXECUTING RETRY**\nSeverity: INFO\nRetry Index: {retry_index}\nAttempt: {attempt}/3;
+    :retry_index++;
+    :Log Retry Execution\n(Retry Index: {retry_index}\nImmediate Attempt: {immediate_attempts}/3\nTimestamp: {timestamp}\nBackoff Calculation: {calc}\nElapsed Time: {elapsed_time}h);
     
     if (Success?) then (Yes)
       :Complete Successfully;
-      :Log Success\n(Final Retry Index: {retry_index}\nTotal Attempts: {attempts}\nDuration: {duration}\nRecovery Time: {recovery});
-      :Send Alert to Technical Team\n**RECOVERED SUCCESSFULLY**\nSeverity: INFO\nRetry Index: {retry_index}\nTotal Attempts: {attempts}\nRecovery Time: {recovery}s;
+      :Log Success\n(Final Retry Index: {retry_index}\nImmediate Attempts: {immediate_attempts}\nTotal Duration: {duration}\nRecovery Time: {recovery}\nElapsed Time: {elapsed_time}h);
       :Update Metrics\n(Success Rate, Retry Stats);
       stop
     else (No)
-      :retry_index++;
-      :Log Retry Failure\n(Retry Index: {retry_index}\nAttempt: {attempt}/3\nError Details: {error}\nNext Retry Time: {next});
-      :Send Alert to Technical Team\n**RETRY FAILED**\nSeverity: MEDIUM\nRetry Index: {retry_index}\nAttempt: {attempt}/3\nNext Retry: {next_time};
+      :Log Retry Failure\n(Retry Index: {retry_index}\nImmediate Attempt: {immediate_attempts}/3\nError Details: {error}\nNext Retry Time: {next}\nElapsed Time: {elapsed_time}h);
     endif
   else (No)
+    :Send Alert to Technical Team\n**⚠️ FIRST 3 IMMEDIATE RETRIES FAILED ⚠️**\nSeverity: HIGH\nRetry Index: {retry_index}\nImmediate Attempts: 3 (All Failed)\nElapsed Time: {elapsed_time}h\nError Type: {error_type}\nEndpoint: {endpoint}\nRequest ID: {request_id}\nStatus: Moving to Worker Queue;
+    
     :Publish to\nJob Queue;
-    :Log Queue Submission\n(Retry Index: {retry_index}\nJob ID: {job_id}\nQueue Name: {queue}\nPayload Hash: {hash}\nPriority: {priority});
-    :Send Alert to Technical Team\n**MOVED TO JOB QUEUE**\nSeverity: MEDIUM\nRetry Index: {retry_index}\nJob ID: {job_id}\nQueue: {queue_name};
+    :Log Queue Submission\n(Retry Index: {retry_index}\nJob ID: {job_id}\nQueue Name: {queue}\nPayload Hash: {hash}\nPriority: {priority}\nElapsed Time: {elapsed_time}h);
+    
     :worker_retry_index = 0;
+    :last_alert_time = current_timestamp;
     :Worker Retry Process;
     
     repeat
       :worker_retry_index++;
-      :Log Worker Attempt\n(Worker Retry Index: {worker_retry_index}\nMain Retry Index: {retry_index}\nWorker ID: {worker_id}\nTimestamp: {timestamp});
-      :Send Alert to Technical Team\n**WORKER RETRY ATTEMPT**\nSeverity: INFO\nWorker Retry Index: {worker_retry_index}/{WORKER_MAX_RETRIES}\nMain Retry Index: {retry_index}\nWorker ID: {worker_id};
+      :Calculate elapsed_time\n= (current_timestamp - start_time) / 3600;
+      :Calculate time_since_last_alert\n= (current_timestamp - last_alert_time) / 3600;
+      
+      if (elapsed_time >= 24?) then (Yes)
+        :Log Max Duration Exceeded\n(Main Retry Index: {retry_index}\nWorker Retry Index: {worker_retry_index}\nElapsed Time: {elapsed_time}h\nTotal Retries: {total_retries}\nStatus: MAX_DURATION_EXCEEDED);
+        
+        :Send Alert to Technical Team\n**🚨 CRITICAL: 24 HOUR RETRY LIMIT EXCEEDED 🚨**\nSeverity: CRITICAL\nMain Retry Index: {retry_index}\nWorker Retry Index: {worker_retry_index}\nTotal Retry Duration: {elapsed_time} hours\nStart Time: {start_time}\nEnd Time: {current_timestamp}\nTotal Retries: {total_retries}\nError Type: {error_type}\nEndpoint: {endpoint}\nJob ID: {job_id}\nRequest ID: {request_id}\nError Summary: {full_error_history}\n⚠️ IMMEDIATE ESCALATION REQUIRED ⚠️;
+        
+        :Move to DLQ;
+        :Store Complete Context\n(All Logs, Request/Response Data,\nFull 24hr Retry Timeline);
+        :Escalate to On-Call Engineer;
+        :Send SMS/Phone Alert\nto Technical Lead;
+        :Manual Intervention Required;
+        stop
+      endif
+      
+      :Log Worker Attempt\n(Worker Retry Index: {worker_retry_index}\nMain Retry Index: {retry_index}\nWorker ID: {worker_id}\nTimestamp: {timestamp}\nElapsed Time: {elapsed_time}h);
       
       if (Success after\nlong-term retries?) then (Yes)
         :Complete Successfully;
-        :Log Final Success\n(Main Retry Index: {retry_index}\nWorker Retry Index: {worker_retry_index}\nTotal Duration: {duration}\nWorker ID: {worker_id}\nRecovery Path: {path});
-        :Send Alert to Technical Team\n**WORKER RECOVERED SUCCESSFULLY**\nSeverity: INFO\nMain Retry Index: {retry_index}\nWorker Retry Index: {worker_retry_index}\nTotal Duration: {duration}s\nWorker ID: {worker_id};
+        :Log Final Success\n(Main Retry Index: {retry_index}\nWorker Retry Index: {worker_retry_index}\nTotal Duration: {elapsed_time}h\nWorker ID: {worker_id}\nRecovery Path: {path});
         :Update Metrics;
         stop
       else (No)
-        :Log Worker Failure\n(Worker Retry Index: {worker_retry_index}\nMain Retry Index: {retry_index}\nWorker ID: {worker_id}\nError Details: {error});
-        :Send Alert to Technical Team\n**WORKER RETRY FAILED**\nSeverity: MEDIUM\nWorker Retry Index: {worker_retry_index}/{WORKER_MAX_RETRIES}\nMain Retry Index: {retry_index}\nError: {error_summary};
+        :Log Worker Failure\n(Worker Retry Index: {worker_retry_index}\nMain Retry Index: {retry_index}\nWorker ID: {worker_id}\nError Details: {error}\nElapsed Time: {elapsed_time}h);
         
-        if (Max retries\nexceeded?) then (Yes)
-          :Move to DLQ;
-          :Log DLQ Placement\n(Main Retry Index: {retry_index}\nWorker Retry Index: {worker_retry_index}\nJob ID: {job_id}\nFull Error History: {history}\nFinal State: {state});
-          :Store Complete Context\n(All Logs, Request/Response Data,\nRetry Timeline with all indices);
-          :Send CRITICAL Alert to Technical Team\n**MOVED TO DEAD LETTER QUEUE**\nSeverity: CRITICAL\nMain Retry Index: {retry_index}\nWorker Retry Index: {worker_retry_index}\nTotal Retries: {total_retries}\nJob ID: {job_id}\nError Summary: {summary}\n⚠️ IMMEDIATE ACTION REQUIRED ⚠️;
-          :Create P1 Incident Ticket\n(High Priority)\nRetry Indices: {retry_index}, {worker_retry_index};
-          :Escalate to On-Call Engineer;
-          :Send SMS/Phone Alert\nto Technical Lead;
-          :Manual Intervention;
-          stop
-        else (No)
-          :Continue 2hr\nRetry Cycle;
-          :Log Retry Schedule\n(Worker Retry Index: {worker_retry_index}\nMain Retry Index: {retry_index}\nNext Retry Time: {next}\nBackoff Duration: {backoff});
-          :Send Alert to Technical Team\n**CONTINUING RETRY CYCLE**\nSeverity: INFO\nWorker Retry Index: {worker_retry_index}\nNext Retry: {next_time}\nBackoff: {backoff}s;
+        if (time_since_last_alert >= 2?) then (Yes - Send 2hr Alert)
+          :Send Alert to Technical Team\n**⏰ 2-HOUR RETRY UPDATE**\nSeverity: MEDIUM\nMain Retry Index: {retry_index}\nWorker Retry Index: {worker_retry_index}\nElapsed Time: {elapsed_time}h / 24h\nTime Since Last Alert: {time_since_last_alert}h\nWorker ID: {worker_id}\nError Type: {error_type}\nRetry Status: CONTINUING\nNext Retry: in 2 hours\nRemaining Time: {24 - elapsed_time}h;
+          
+          :last_alert_time = current_timestamp;
         endif
+        
+        :Continue 2hr\nRetry Cycle;
+        :Wait 2 hours;
+        :Log Retry Schedule\n(Worker Retry Index: {worker_retry_index}\nMain Retry Index: {retry_index}\nNext Retry Time: {next}\nElapsed Time: {elapsed_time}h\nRemaining Time: {24 - elapsed_time}h);
+        
       endif
-    repeat while
+    repeat while (elapsed_time < 24)
   endif
-repeat while
+repeat while (immediate_attempts < 3 AND elapsed_time < 24)
 
 @enduml
